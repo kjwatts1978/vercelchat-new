@@ -1,8 +1,13 @@
 'use client';
 
-import AudioRecorder from '../components/AudioRecorder';
+import dynamic from 'next/dynamic';
 import DebugConsole from '../components/DebugConsole';
 import { useState } from 'react';
+
+// Dynamically import AudioRecorder with SSR disabled
+const AudioRecorder = dynamic(() => import('../components/AudioRecorder'), {
+  ssr: false, // Prevents server-side rendering of this component
+});
 
 export default function Home() {
   const [transcription, setTranscription] = useState('');
@@ -13,7 +18,7 @@ export default function Home() {
   };
 
   const handleDebug = (message: string) => {
-    setDebugMessages(prev => [...prev, message]);
+    setDebugMessages((prev) => [...prev, message]);
   };
 
   return (
@@ -44,4 +49,4 @@ export default function Home() {
       </div>
     </div>
   );
-} 
+}
