@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef } from 'react';
+import RecordRTC from 'recordrtc';
 
 interface AudioRecorderProps {
   onTranscription: (text: string) => void;
@@ -10,49 +11,28 @@ interface AudioRecorderProps {
 export default function AudioRecorder({ onTranscription, onDebug }: AudioRecorderProps) {
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const recorderRef = useRef<RecordRTC | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
   const startRecording = async () => {
     try {
       onDebug('Requesting microphone access...');
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
       onDebug('Microphone access granted.');
 
-      // Use audio/mp4 for iOS compatibility with Whisper
-      let options = {};
-      if (MediaRecorder.isTypeSupported('audio/mp4')) {
-        options = { mimeType: 'audio/mp4' };
-        onDebug('Using audio/mp4 format (best for iOS and Whisper)');
-      } else if (MediaRecorder.isTypeSupported('audio/wav')) {
-        options = { mimeType: 'audio/wav' };
-        onDebug('Using audio/wav format (fallback)');
-      } else if (MediaRecorder.isTypeSupported('audio/webm')) {
-        options = { mimeType: 'audio/webm' };
-        onDebug('Using audio/webm format (fallback)');
-      } else {
-        onDebug('Using default audio format');
-      }
-      
-      // Clear previous chunks
-      chunksRef.current = [];
-      
-      // Create the recorder
-      mediaRecorderRef.current = new MediaRecorder(stream, options);
-      
-      // Set up data handler to collect chunks
-      mediaRecorderRef.current.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          chunksRef.current.push(event.data);
-          onDebug(`Audio chunk received: ${Math.round(event.data.size / 1024)} KB`);
-        }
-      };
-      
-      onDebug(`MediaRecorder initialized with MIME type: ${mediaRecorderRef.current.mimeType}`);
-      
-      // Request data every second for better handling
-      mediaRecorderRef.current.start(1000);
-      onDebug('Recording started.');
+      const recorder = new RecordRTC(stream, {
+        type: 'audio',
+        mimeType: 'audio/wav', // WAV is reliable for iOS and Whisper
+        recorderType: RecordRTC.StereoAudioRecorder,
+        numberOfAudioChannels: 1, // Mono to reduce file size
+        desiredSampRate: 16000, // Matches Whisper's recommended sample rate
+      });
+
+      recorder.startRecording();
+      recorderRef.current = recorder;
+      onDebug('Recording started with audio/wav format.');
       setIsRecording(true);
     } catch (error) {
       onDebug(`Error accessing microphone: ${error instanceof Error ? error.message : String(error)}`);
@@ -61,41 +41,35 @@ export default function AudioRecorder({ onTranscription, onDebug }: AudioRecorde
   };
 
   const stopRecording = () => {
-    if (!mediaRecorderRef.current) {
+    if (!recorderRef.current) {
       onDebug('No active recorder found');
       return;
     }
-    
+
     onDebug('Stopping recording...');
     setIsProcessing(true);
-    
-    // Set up the onstop event handler
-    mediaRecorderRef.current.onstop = async () => {
-      const mimeType = mediaRecorderRef.current?.mimeType || 'audio/mp4';
-      onDebug(`Recording finished with MIME type: ${mimeType}`);
-      
-      // Determine file extension based on mime type
-      let fileExt = 'm4a'; // Default to m4a for audio/mp4
-      if (mimeType.includes('webm')) fileExt = 'webm';
-      if (mimeType.includes('wav')) fileExt = 'wav';
-      
-      // Create a blob from all the chunks
-      const audioBlob = new Blob(chunksRef.current, { type: mimeType });
+
+    recorderRef.current.stopRecording(async () => {
+      const audioBlob = recorderRef.current!.getBlob();
       onDebug(`Audio blob created, size: ${Math.round(audioBlob.size / 1024)} KB`);
-      
+
+      // Create a downloadable URL
+      const url = URL.createObjectURL(audioBlob);
+      setAudioUrl(url);
+
       const formData = new FormData();
-      formData.append('file', audioBlob, `recording.${fileExt}`);
-      
-      onDebug(`Sending audio to API as ${fileExt} file...`);
+      formData.append('file', audioBlob, 'recording.wav');
+
+      onDebug('Sending audio to API as WAV file...');
       try {
         const response = await fetch('/api/transcribe', {
           method: 'POST',
           body: formData,
         });
-        
+
         onDebug(`API response status: ${response.status}`);
-        
         const data = await response.json();
+
         if (data.text) {
           onDebug(`Transcription received: "${data.text}"`);
           onTranscription(data.text);
@@ -112,43 +86,54 @@ export default function AudioRecorder({ onTranscription, onDebug }: AudioRecorde
       } finally {
         setIsProcessing(false);
       }
-    };
-    
-    // Stop recording - this will trigger the onstop event
-    mediaRecorderRef.current.stop();
+
+      // Clean up the stream
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => {
+          onDebug(`Stopping track: ${track.kind}`);
+          track.stop();
+        });
+        streamRef.current = null;
+      }
+    });
+
     setIsRecording(false);
-    
-    // Stop all tracks in the stream
-    if (mediaRecorderRef.current.stream) {
-      mediaRecorderRef.current.stream.getTracks().forEach(track => {
-        onDebug(`Stopping track: ${track.kind}`);
-        track.stop();
-      });
-    }
   };
 
   return (
-    <div>
-      <button
-        onClick={isRecording ? stopRecording : startRecording}
-        disabled={isProcessing}
-        className={`px-4 py-2 rounded ${
-          isRecording 
-            ? 'bg-red-500 hover:bg-red-600 text-white' 
-            : 'bg-blue-500 hover:bg-blue-600 text-white'
-        } ${isProcessing ? 'opacity-50 cursor-not-allowed' : ''}`}
-      >
-        {isProcessing 
-          ? 'Processing...' 
-          : isRecording 
-            ? 'Stop Recording' 
-            : 'Start Recording'
-        }
-      </button>
-      {isProcessing && (
-        <span className="ml-3 text-gray-600">
-          Transcribing audio, please wait...
-        </span>
+    <div className="space-y-4">
+      <div>
+        <button
+          onClick={isRecording ? stopRecording : startRecording}
+          disabled={isProcessing}
+          className={`px-4 py-2 rounded ${
+            isRecording
+              ? 'bg-red-500 hover:bg-red-600 text-white'
+              : 'bg-blue-500 hover:bg-blue-600 text-white'
+          } ${isProcessing ? 'opacity-50 cursor-not-allowed' : ''}`}
+        >
+          {isProcessing
+            ? 'Processing...'
+            : isRecording
+            ? 'Stop Recording'
+            : 'Start Recording'}
+        </button>
+        {isProcessing && (
+          <span className="ml-3 text-gray-600">
+            Transcribing audio, please wait...
+          </span>
+        )}
+      </div>
+      {audioUrl && (
+        <div>
+          <a
+            href={audioUrl}
+            download="recording.wav"
+            className="text-blue-500 hover:underline"
+          >
+            Download Recorded Audio (WAV)
+          </a>
+        </div>
       )}
     </div>
   );
