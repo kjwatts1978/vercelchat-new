@@ -2,11 +2,6 @@ import './globals.css';
 import type { Metadata } from 'next';
 import { Montserrat } from 'next/font/google';
 
-// Import Google Font - Bebas Neue for headings
-const bebasNeue = fetch(
-  'https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap'
-).then((res) => res.text());
-
 // Montserrat font for body text
 const montserrat = Montserrat({
   subsets: ['latin'],
@@ -37,4 +32,4 @@ export default function RootLayout({
       </body>
     </html>
   );
-} 
+}
