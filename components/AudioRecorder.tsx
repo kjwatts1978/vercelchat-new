@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import RecordRTC from 'recordrtc';
 
 interface AudioRecorderProps {
@@ -12,8 +12,38 @@ export default function AudioRecorder({ onTranscription, onDebug }: AudioRecorde
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [recordingTime, setRecordingTime] = useState(0);
   const recorderRef = useRef<RecordRTC | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Timer effect for tracking recording duration
+  useEffect(() => {
+    if (isRecording) {
+      timerRef.current = setInterval(() => {
+        setRecordingTime(prev => prev + 1);
+      }, 1000);
+    } else {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+      }
+      if (!isProcessing) {
+        setRecordingTime(0);
+      }
+    }
+    
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+      }
+    };
+  }, [isRecording, isProcessing]);
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
 
   const startRecording = async () => {
     try {
@@ -101,37 +131,61 @@ export default function AudioRecorder({ onTranscription, onDebug }: AudioRecorde
   };
 
   return (
-    <div className="space-y-4">
-      <div>
+    <div className="space-y-6">
+      {/* Recording timer */}
+      <div className="w-full flex justify-center items-center">
+        <div className={`font-mono text-3xl font-bold ${
+          isRecording ? 'text-neo-pink' : 'text-neo-black'
+        }`}>
+          {formatTime(recordingTime)}
+          {isRecording && <span className="ml-2 text-neo-pink animate-pulse">●</span>}
+        </div>
+      </div>
+
+      {/* Main recording button with neo-brutalism style */}
+      <div className="flex flex-col items-center">
         <button
           onClick={isRecording ? stopRecording : startRecording}
           disabled={isProcessing}
-          className={`px-4 py-2 rounded ${
-            isRecording
-              ? 'bg-red-500 hover:bg-red-600 text-white'
-              : 'bg-blue-500 hover:bg-blue-600 text-white'
-          } ${isProcessing ? 'opacity-50 cursor-not-allowed' : ''}`}
+          className={`
+            w-48 h-48 rounded-full
+            font-neo text-2xl uppercase
+            border-4 border-neo-black
+            flex items-center justify-center
+            transition-all duration-150
+            ${
+              isProcessing 
+                ? 'bg-gray-400 text-white cursor-not-allowed opacity-70' 
+                : isRecording 
+                  ? 'bg-neo-pink text-white shadow-neo-md hover:translate-x-1 hover:translate-y-1 hover:shadow-none' 
+                  : 'bg-neo-yellow text-neo-black shadow-neo-md hover:translate-x-1 hover:translate-y-1 hover:shadow-none'
+            }
+          `}
         >
-          {isProcessing
-            ? 'Processing...'
-            : isRecording
-            ? 'Stop Recording'
-            : 'Start Recording'}
+          {isProcessing 
+            ? 'Processing...' 
+            : isRecording 
+              ? 'STOP' 
+              : 'START'
+          }
         </button>
+        
         {isProcessing && (
-          <span className="ml-3 text-gray-600">
-            Transcribing audio, please wait...
-          </span>
+          <div className="mt-4 font-neo text-lg text-neo-black border-l-4 border-neo-pink pl-3">
+            Transcribing audio...
+          </div>
         )}
       </div>
+
+      {/* Download option */}
       {audioUrl && (
-        <div>
+        <div className="mt-6 text-center">
           <a
             href={audioUrl}
             download="recording.wav"
-            className="text-blue-500 hover:underline"
+            className="inline-block bg-neo-blue text-neo-black font-neo py-2 px-6 border-4 border-neo-black shadow-neo-sm hover:translate-x-1 hover:translate-y-1 hover:shadow-none transition-all"
           >
-            Download Recorded Audio (WAV)
+            DOWNLOAD AUDIO
           </a>
         </div>
       )}
