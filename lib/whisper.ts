@@ -16,6 +16,17 @@ export async function transcribeWithWhisper(file: File): Promise<string> {
     throw new Error('Cannot transcribe empty file');
   }
   
+  // Check file extension and type
+  const fileExtension = file.name.split('.').pop()?.toLowerCase();
+  console.log(`File extension: ${fileExtension}, MIME type: ${file.type}`);
+  
+  // Validate file format (Whisper supports: mp3, mp4, mpeg, mpga, m4a, wav, webm)
+  const supportedFormats = ['mp3', 'mp4', 'mpeg', 'mpga', 'm4a', 'wav', 'webm', 'ogg'];
+  if (fileExtension && !supportedFormats.includes(fileExtension)) {
+    console.error(`Unsupported file extension: ${fileExtension}`);
+    throw new Error(`Unsupported audio format: ${fileExtension}. Supported formats are: ${supportedFormats.join(', ')}`);
+  }
+  
   try {
     console.log(`Initializing OpenAI client for file: ${file.name}`);
     const openai = new OpenAI({ apiKey });
@@ -33,12 +44,25 @@ export async function transcribeWithWhisper(file: File): Promise<string> {
     
     // Handle specific API errors
     if (error instanceof Error) {
-      if (error.message.includes('API key')) {
+      // Extract useful info from error message
+      const errorMsg = error.message.toLowerCase();
+      
+      if (errorMsg.includes('api key')) {
         throw new Error('Invalid OpenAI API key. Please check your API key and try again.');
       }
-      if (error.message.includes('file format')) {
-        throw new Error('Unsupported audio format. Please use a supported audio format.');
+      
+      if (errorMsg.includes('format') || errorMsg.includes('unsupported')) {
+        throw new Error('Unsupported audio format. Please use one of these formats: mp3, mp4, mpeg, m4a, wav, or webm.');
       }
+      
+      if (errorMsg.includes('too large') || errorMsg.includes('size')) {
+        throw new Error('Audio file is too large. Please limit your recording to 25MB or less.');
+      }
+      
+      if (errorMsg.includes('no speech')) {
+        throw new Error('No speech detected in the audio. Please speak clearly and try again.');
+      }
+      
       throw error;
     }
     

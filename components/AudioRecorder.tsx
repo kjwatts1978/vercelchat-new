@@ -11,6 +11,7 @@ export default function AudioRecorder({ onTranscription, onDebug }: AudioRecorde
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
 
   const startRecording = async () => {
     try {
@@ -18,11 +19,39 @@ export default function AudioRecorder({ onTranscription, onDebug }: AudioRecorde
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       onDebug('Microphone access granted.');
 
-      mediaRecorderRef.current = new MediaRecorder(stream);
+      // Use audio/mp4 for iOS compatibility with Whisper
+      let options = {};
+      if (MediaRecorder.isTypeSupported('audio/mp4')) {
+        options = { mimeType: 'audio/mp4' };
+        onDebug('Using audio/mp4 format (best for iOS and Whisper)');
+      } else if (MediaRecorder.isTypeSupported('audio/wav')) {
+        options = { mimeType: 'audio/wav' };
+        onDebug('Using audio/wav format (fallback)');
+      } else if (MediaRecorder.isTypeSupported('audio/webm')) {
+        options = { mimeType: 'audio/webm' };
+        onDebug('Using audio/webm format (fallback)');
+      } else {
+        onDebug('Using default audio format');
+      }
+      
+      // Clear previous chunks
+      chunksRef.current = [];
+      
+      // Create the recorder
+      mediaRecorderRef.current = new MediaRecorder(stream, options);
+      
+      // Set up data handler to collect chunks
+      mediaRecorderRef.current.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          chunksRef.current.push(event.data);
+          onDebug(`Audio chunk received: ${Math.round(event.data.size / 1024)} KB`);
+        }
+      };
       
       onDebug(`MediaRecorder initialized with MIME type: ${mediaRecorderRef.current.mimeType}`);
       
-      mediaRecorderRef.current.start();
+      // Request data every second for better handling
+      mediaRecorderRef.current.start(1000);
       onDebug('Recording started.');
       setIsRecording(true);
     } catch (error) {
@@ -40,15 +69,24 @@ export default function AudioRecorder({ onTranscription, onDebug }: AudioRecorde
     onDebug('Stopping recording...');
     setIsProcessing(true);
     
-    mediaRecorderRef.current.stop();
-    mediaRecorderRef.current.ondataavailable = async (event) => {
-      const audioBlob = event.data;
-      onDebug(`Recording stopped. Audio data size: ${Math.round(audioBlob.size / 1024)} KB`);
+    // Set up the onstop event handler
+    mediaRecorderRef.current.onstop = async () => {
+      const mimeType = mediaRecorderRef.current?.mimeType || 'audio/mp4';
+      onDebug(`Recording finished with MIME type: ${mimeType}`);
+      
+      // Determine file extension based on mime type
+      let fileExt = 'm4a'; // Default to m4a for audio/mp4
+      if (mimeType.includes('webm')) fileExt = 'webm';
+      if (mimeType.includes('wav')) fileExt = 'wav';
+      
+      // Create a blob from all the chunks
+      const audioBlob = new Blob(chunksRef.current, { type: mimeType });
+      onDebug(`Audio blob created, size: ${Math.round(audioBlob.size / 1024)} KB`);
       
       const formData = new FormData();
-      formData.append('file', audioBlob, 'recording.webm');
+      formData.append('file', audioBlob, `recording.${fileExt}`);
       
-      onDebug('Sending audio to API for transcription...');
+      onDebug(`Sending audio to API as ${fileExt} file...`);
       try {
         const response = await fetch('/api/transcribe', {
           method: 'POST',
@@ -76,6 +114,8 @@ export default function AudioRecorder({ onTranscription, onDebug }: AudioRecorde
       }
     };
     
+    // Stop recording - this will trigger the onstop event
+    mediaRecorderRef.current.stop();
     setIsRecording(false);
     
     // Stop all tracks in the stream
